@@ -48,6 +48,8 @@ type PhaseParams struct {
 	Timeout time.Duration
 	// SkipVersionCheck overrides the verification of binary version compatibility
 	SkipVersionCheck bool
+	// DryRun allows to only print execute/rollback phases
+	DryRun bool
 }
 
 func executePhase(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentFactory, params PhaseParams) error {
@@ -72,6 +74,52 @@ func executePhase(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentF
 	default:
 		return trace.BadParameter("operation type %q does not support plan execution", op.Type)
 	}
+}
+
+const (
+	// planRollbackWarning is shown when "gravity rollback" command is launched
+	// without --confirm flag.
+	planRollbackWarning = `You are about to rollback the following operation:
+
+%v
+Consider checking the operation plan and using --dry-run flag first to see which actions will be performed.
+You can suppress this warning in future by providing --confirm flag.
+
+`
+	// unsupportedRollbackWarning is shown for operations that "gravity rollback"
+	// command does not support.
+	unsupportedRollbackWarning = `"gravity rollback" command does not support %q operations currently.
+Please use "gravity plan rollback" command to rollback individual phases.`
+)
+
+func rollbackPlan(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentFactory, params PhaseParams, confirmed bool) error {
+	operation, err := getActiveOperation(localEnv, environ, params.OperationID)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	op := operation.SiteOperation
+	switch op.Type {
+	case ops.OperationUpdate, ops.OperationUpdateRuntimeEnviron, ops.OperationUpdateConfig:
+	default:
+		return trace.BadParameter(unsupportedRollbackWarning, op.TypeString())
+	}
+	if !confirmed && !params.DryRun {
+		localEnv.Printf(planRollbackWarning, operationList([]clusterOperation{*operation}).formatTable())
+		if err := enforceConfirmation("Proceed?"); err != nil {
+			return trace.Wrap(err)
+		}
+	}
+	params.PhaseID = fsm.RootPhase
+	switch op.Type {
+	case ops.OperationUpdate:
+		return rollbackUpdatePhaseForOperation(localEnv, environ, params, op)
+	case ops.OperationUpdateRuntimeEnviron:
+		return rollbackEnvironPhaseForOperation(localEnv, environ, params, op)
+	case ops.OperationUpdateConfig:
+		return rollbackConfigPhaseForOperation(localEnv, environ, params, op)
+	}
+	// Should never hit this.
+	return trace.BadParameter(unsupportedRollbackWarning, op.TypeString())
 }
 
 func rollbackPhase(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentFactory, params PhaseParams) error {
