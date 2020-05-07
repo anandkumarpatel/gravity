@@ -112,14 +112,20 @@ func rollbackPlan(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentF
 	params.PhaseID = fsm.RootPhase
 	switch op.Type {
 	case ops.OperationUpdate:
-		return rollbackUpdatePhaseForOperation(localEnv, environ, params, op)
+		err = rollbackUpdatePhaseForOperation(localEnv, environ, params, op)
 	case ops.OperationUpdateRuntimeEnviron:
-		return rollbackEnvironPhaseForOperation(localEnv, environ, params, op)
+		err = rollbackEnvironPhaseForOperation(localEnv, environ, params, op)
 	case ops.OperationUpdateConfig:
-		return rollbackConfigPhaseForOperation(localEnv, environ, params, op)
+		err = rollbackConfigPhaseForOperation(localEnv, environ, params, op)
+	default: // Should never hit this.
+		return trace.BadParameter(unsupportedRollbackWarning, op.TypeString())
 	}
-	// Should never hit this.
-	return trace.BadParameter(unsupportedRollbackWarning, op.TypeString())
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Make sure to reset the cluster state after the operation has been
+	// fully rolled back.
+	return completeOperationPlanForOperation(localEnv, environ, op)
 }
 
 func rollbackPhase(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentFactory, params PhaseParams) error {
@@ -149,7 +155,14 @@ func completeOperationPlan(localEnv *localenv.LocalEnvironment, environ LocalEnv
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	op := operation.SiteOperation
+	err = completeOperationPlanForOperation(localEnv, environ, operation.SiteOperation)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	return nil
+}
+
+func completeOperationPlanForOperation(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentFactory, op ops.SiteOperation) (err error) {
 	switch op.Type {
 	case ops.OperationInstall:
 		// There's only one install operation
