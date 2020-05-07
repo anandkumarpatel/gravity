@@ -125,7 +125,10 @@ func rollbackPlan(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentF
 	}
 	// Make sure to reset the cluster state after the operation has been
 	// fully rolled back.
-	return completeOperationPlanForOperation(localEnv, environ, op)
+	if !params.DryRun {
+		return completeOperationPlanForOperation(localEnv, environ, op)
+	}
+	return nil
 }
 
 func rollbackPhase(localEnv *localenv.LocalEnvironment, environ LocalEnvironmentFactory, params PhaseParams) error {
